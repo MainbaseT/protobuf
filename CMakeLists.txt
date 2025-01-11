@@ -1,6 +1,6 @@
 # Minimum CMake required. If available, accept the policy-controlled behavior up
 # to 3.26.
-cmake_minimum_required(VERSION 3.10...3.26)
+cmake_minimum_required(VERSION 3.16...3.26)
 
 # Revert to old behavior for MSVC debug symbols.
 if(POLICY CMP0141)
@@ -35,6 +35,8 @@ option(protobuf_BUILD_LIBUPB "Build libupb" ON)
 option(protobuf_DISABLE_RTTI "Remove runtime type information in the binaries" OFF)
 option(protobuf_TEST_XML_OUTDIR "Output directory for XML logs from tests." "")
 option(protobuf_ALLOW_CCACHE "Adjust build flags to allow for ccache support." OFF)
+option(protobuf_FORCE_FETCH_DEPENDENCIES "Force all dependencies to be downloaded from GitHub.  Local installations will be ignored." OFF)
+option(protobuf_LOCAL_DEPENDENCIES_ONLY "Prevent downloading any dependencies from GitHub. If this option is set, the dependency must be available locally as an installed package." OFF)
 
 # We support Unity (Jumbo) builds best-effort.
 option(protobuf_USE_UNITY_BUILD "Enable Unity (Jumbo) build for" OFF)
@@ -105,6 +107,10 @@ string(REGEX REPLACE     "${protobuf_VERSION_REGEX}" "\\3"
   protobuf_VERSION_PATCH "${protobuf_VERSION_STRING}")
 string(REGEX REPLACE     "${protobuf_VERSION_REGEX}" "\\5"
   protobuf_VERSION_PRERELEASE "${protobuf_VERSION_STRING}")
+
+if (protobuf_FORCE_FETCH_DEPENDENCIES AND protobuf_LOCAL_DEPENDENCIES_ONLY)
+  message(FATAL_ERROR "Conflicting options protobuf_FORCE_FETCH_DEPENDENCIES and protobuf_LOCAL_DEPENDENCIES_ONLY both set")
+endif()
 
 # Package version
 set(protobuf_VERSION
@@ -180,7 +186,7 @@ set(protobuf_LINK_LIBATOMIC false)
 if (NOT MSVC)
   include(CheckCXXSourceCompiles)
   set(OLD_CMAKE_REQUIRED_FLAGS ${CMAKE_REQUIRED_FLAGS})
-  set(CMAKE_REQUIRED_FLAGS ${CMAKE_REQUIRED_FLAGS} -std=c++14)
+  set(CMAKE_REQUIRED_FLAGS ${CMAKE_REQUIRED_FLAGS} -std=c++17)
   check_cxx_source_compiles("
     #include <atomic>
     int main() {
@@ -259,14 +265,6 @@ include_directories(
   ${protobuf_SOURCE_DIR}
   ${protobuf_BINARY_DIR}/src
   ${protobuf_SOURCE_DIR}/src)
-
-set(protobuf_FETCH_DEPENDENCIES ON CACHE BOOL "Allow downloading dependencies from GitHub. If this option is not set, the dependency must be available locally as an installed package.")
-
-set(protobuf_ABSL_PROVIDER "fetch" CACHE STRING "Provider of absl library.  `fetch` downloads from GitHub and `package` searches for a local installation")
-set_property(CACHE protobuf_ABSL_PROVIDER PROPERTY STRINGS "package" "fetch")
-
-set(protobuf_JSONCPP_PROVIDER "fetch" CACHE STRING "Provider of jsoncpp library.  `fetch` downloads from GitHub and `package` searches for a local installation")
-set_property(CACHE protobuf_JSONCPP_PROVIDER PROPERTY STRINGS "package" "fetch")
 
 if (protobuf_BUILD_TESTS)
   include(${protobuf_SOURCE_DIR}/cmake/gtest.cmake)

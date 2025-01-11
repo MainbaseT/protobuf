@@ -15,6 +15,7 @@
 #include "absl/strings/string_view.h"
 #include "google/protobuf/compiler/cpp/helpers.h"
 #include "google/protobuf/compiler/rust/accessors/accessor_case.h"
+#include "google/protobuf/compiler/rust/accessors/accessors.h"
 #include "google/protobuf/compiler/rust/context.h"
 #include "google/protobuf/compiler/rust/naming.h"
 #include "google/protobuf/compiler/rust/rust_field_type.h"
@@ -81,11 +82,28 @@ namespace rust {
 // }
 
 namespace {
+
+bool IsSupportedOneofFieldCase(Context& ctx, const FieldDescriptor& field) {
+  if (!IsSupportedField(ctx, field)) {
+    return false;
+  }
+
+  // In addition to any fields that are otherwise unsupported, if the
+  // oneof contains a string or bytes field which is not string_view or string
+  // representation (namely, Cord or StringPiece), we don't support it
+  // currently.
+  if (ctx.is_cpp() && field.cpp_type() == FieldDescriptor::CPPTYPE_STRING &&
+      field.cpp_string_type() != FieldDescriptor::CppStringType::kString &&
+      field.cpp_string_type() != FieldDescriptor::CppStringType::kView) {
+    return false;
+  }
+  return true;
+}
+
 // A user-friendly rust type for a view of this field with lifetime 'msg.
 std::string RsTypeNameView(Context& ctx, const FieldDescriptor& field) {
-  if (field.options().has_ctype()) {
-    return "";  // TODO: b/308792377 - ctype fields not supported yet.
-  }
+  ABSL_CHECK(IsSupportedOneofFieldCase(ctx, field));
+
   switch (GetRustFieldType(field.type())) {
     case RustFieldType::INT32:
     case RustFieldType::INT64:
@@ -98,11 +116,13 @@ std::string RsTypeNameView(Context& ctx, const FieldDescriptor& field) {
     case RustFieldType::BYTES:
       return "&'msg [u8]";
     case RustFieldType::STRING:
-      return "&'msg ::__pb::ProtoStr";
+      return "&'msg ::protobuf::ProtoStr";
     case RustFieldType::MESSAGE:
-      return absl::StrCat("::__pb::View<'msg, ", RsTypePath(ctx, field), ">");
+      return absl::StrCat("::protobuf::View<'msg, ", RsTypePath(ctx, field),
+                          ">");
     case RustFieldType::ENUM:
-      return absl::StrCat("::__pb::View<'msg, ", RsTypePath(ctx, field), ">");
+      return absl::StrCat("::protobuf::View<'msg, ", RsTypePath(ctx, field),
+                          ">");
   }
 
   ABSL_LOG(FATAL) << "Unexpected field type: " << field.type_name();
@@ -119,10 +139,10 @@ void GenerateOneofDefinition(Context& ctx, const OneofDescriptor& oneof) {
            [&] {
              for (int i = 0; i < oneof.field_count(); ++i) {
                auto& field = *oneof.field(i);
-               std::string rs_type = RsTypeNameView(ctx, field);
-               if (rs_type.empty()) {
+               if (!IsSupportedOneofFieldCase(ctx, field)) {
                  continue;
                }
+               std::string rs_type = RsTypeNameView(ctx, field);
                ctx.Emit({{"name", OneofCaseRsName(field)},
                          {"type", rs_type},
                          {"number", std::to_string(field.number())}},
@@ -131,7 +151,6 @@ void GenerateOneofDefinition(Context& ctx, const OneofDescriptor& oneof) {
              }
            }},
       },
-      // TODO: Revisit if isize is the optimal repr for this enum.
       // Note: This enum deliberately has a 'msg lifetime associated with it
       // even if all fields were scalars; we could conditionally exclude the
       // lifetime under that case, but it would mean changing the .proto file
@@ -141,7 +160,7 @@ void GenerateOneofDefinition(Context& ctx, const OneofDescriptor& oneof) {
       #[non_exhaustive]
       #[derive(Debug, Clone, Copy)]
       #[allow(dead_code)]
-      #[repr(isize)]
+      #[repr(u32)]
       pub enum $view_enum_name$<'msg> {
         $view_fields$
 
@@ -157,6 +176,9 @@ void GenerateOneofDefinition(Context& ctx, const OneofDescriptor& oneof) {
              [&] {
                for (int i = 0; i < oneof.field_count(); ++i) {
                  auto& field = *oneof.field(i);
+                 if (!IsSupportedOneofFieldCase(ctx, field)) {
+                   continue;
+                 }
                  ctx.Emit({{"name", OneofCaseRsName(field)},
                            {"number", std::to_string(field.number())}},
                           R"rs($name$ = $number$,
@@ -167,6 +189,9 @@ void GenerateOneofDefinition(Context& ctx, const OneofDescriptor& oneof) {
              [&] {
                for (int i = 0; i < oneof.field_count(); ++i) {
                  auto& field = *oneof.field(i);
+                 if (!IsSupportedOneofFieldCase(ctx, field)) {
+                   continue;
+                 }
                  ctx.Emit({{"name", OneofCaseRsName(field)},
                            {"number", std::to_string(field.number())}},
                           R"rs($number$ => Some($case_enum_name$::$name$),
@@ -206,19 +231,17 @@ void GenerateOneofAccessors(Context& ctx, const OneofDescriptor& oneof,
       {{"oneof_name", RsSafeName(oneof.name())},
        {"view_lifetime", ViewLifetime(accessor_case)},
        {"self", ViewReceiver(accessor_case)},
-       {"oneof_enum_module",
-        absl::StrCat("crate::", RustModuleForContainingType(
-                                    ctx, oneof.containing_type()))},
+       {"oneof_enum_module", RustModule(ctx, oneof)},
        {"view_enum_name", OneofViewEnumRsName(oneof)},
        {"case_enum_name", OneofCaseEnumRsName(oneof)},
        {"view_cases",
         [&] {
           for (int i = 0; i < oneof.field_count(); ++i) {
             auto& field = *oneof.field(i);
-            std::string rs_type = RsTypeNameView(ctx, field);
-            if (rs_type.empty()) {
+            if (!IsSupportedOneofFieldCase(ctx, field)) {
               continue;
             }
+            std::string rs_type = RsTypeNameView(ctx, field);
             std::string field_name = FieldNameWithCollisionAvoidance(field);
             ctx.Emit(
                 {
@@ -275,9 +298,7 @@ void GenerateOneofExternC(Context& ctx, const OneofDescriptor& oneof) {
 
   ctx.Emit(
       {
-          {"oneof_enum_module",
-           absl::StrCat("crate::", RustModuleForContainingType(
-                                       ctx, oneof.containing_type()))},
+          {"oneof_enum_module", RustModule(ctx, oneof)},
           {"case_enum_rs_name", OneofCaseEnumRsName(oneof)},
           {"case_thunk", ThunkName(ctx, oneof, "case")},
       },

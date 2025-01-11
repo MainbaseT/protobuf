@@ -38,7 +38,7 @@ public final class TextFormat {
 
   private static final Logger logger = Logger.getLogger(TextFormat.class.getName());
 
-  private static final String DEBUG_STRING_SILENT_MARKER = "\t ";
+  private static final String DEBUG_STRING_SILENT_MARKER = " \t ";
 
   private static final String REDACTED_MARKER = "[REDACTED]";
 
@@ -135,7 +135,7 @@ public final class TextFormat {
     private static final Printer DEFAULT_DEBUG_FORMAT =
         new Printer(
             /* escapeNonAscii= */ true,
-            /* useShortRepeatedPrimitives= */ true,
+            /* useShortRepeatedPrimitives= */ false,
             TypeRegistry.getEmptyTypeRegistry(),
             ExtensionRegistryLite.getEmptyRegistry(),
             /* enablingSafeDebugFormat= */ true,

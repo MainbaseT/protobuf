@@ -8,10 +8,13 @@
 #include "google/protobuf/compiler/hpb/gen_extensions.h"
 
 #include <string>
+#include <vector>
 
 #include "absl/strings/str_cat.h"
 #include "google/protobuf/compiler/hpb/context.h"
+#include "google/protobuf/compiler/hpb/gen_utils.h"
 #include "google/protobuf/compiler/hpb/names.h"
+#include "google/protobuf/descriptor.h"
 #include "upb_generator/c/names.h"
 
 namespace google::protobuf::hpb_generator {
@@ -38,19 +41,21 @@ void WriteExtensionIdentifierHeader(const protobuf::FieldDescriptor* ext,
                                     Context& ctx) {
   std::string mini_table_name =
       absl::StrCat(ExtensionIdentifierBase(ext), "_", ext->name(), "_ext");
-  if (ext->extension_scope()) {
-    ctx.EmitLegacy(
-        R"cc(
-          static const ::hpb::internal::ExtensionIdentifier<$0, $1> $2;
-        )cc",
-        ContainingTypeName(ext), CppTypeParameterName(ext), ext->name());
-  } else {
-    ctx.EmitLegacy(
-        R"cc(
-          extern const ::hpb::internal::ExtensionIdentifier<$0, $1> $2;
-        )cc",
-        ContainingTypeName(ext), CppTypeParameterName(ext), ext->name());
+  std::string linkage = ext->extension_scope() ? "static" : "extern";
+  std::string ext_type = CppTypeParameterName(ext);
+  if (ext->is_repeated()) {
+    ext_type = absl::StrCat("::hpb::RepeatedField<", ext_type, ">");
   }
+  ctx.Emit(
+      {{"linkage", linkage},
+       {"extendee_type", ContainingTypeName(ext)},
+       {"extension_type", ext_type},
+       {"extension_name", ext->name()}},
+      R"cc(
+        $linkage$ const ::hpb::internal::ExtensionIdentifier<$extendee_type$,
+                                                             $extension_type$>
+            $extension_name$;
+      )cc");
 }
 
 void WriteExtensionIdentifiersHeader(
@@ -69,11 +74,16 @@ void WriteExtensionIdentifier(const protobuf::FieldDescriptor* ext,
       absl::StrCat(ExtensionIdentifierBase(ext), "_", ext->name(), "_ext");
   std::string class_prefix =
       ext->extension_scope() ? ClassName(ext->extension_scope()) + "::" : "";
+  std::string ext_type = CppTypeParameterName(ext);
+  if (ext->is_repeated()) {
+    ext_type = absl::StrCat("::hpb::RepeatedField<", ext_type, ">");
+  }
   ctx.Emit(
       {{"containing_type_name", ContainingTypeName(ext)},
        {"mini_table_name", mini_table_name},
        {"ext_name", ext->name()},
-       {"ext_type", CppTypeParameterName(ext)},
+       {"default_value", DefaultValue(ext)},
+       {"ext_type", ext_type},
        {"class_prefix", class_prefix}},
       R"cc(
         constexpr ::hpb::internal::ExtensionIdentifier<$containing_type_name$,
@@ -82,7 +92,7 @@ void WriteExtensionIdentifier(const protobuf::FieldDescriptor* ext,
                 ::hpb::internal::PrivateAccess::InvokeConstructor<
                     ::hpb::internal::ExtensionIdentifier<$containing_type_name$,
                                                          $ext_type$>>(
-                    &$mini_table_name$);
+                    &$mini_table_name$, $default_value$);
       )cc");
 }
 

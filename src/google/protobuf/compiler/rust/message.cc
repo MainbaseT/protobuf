@@ -7,11 +7,8 @@
 
 #include "google/protobuf/compiler/rust/message.h"
 
-#include <string>
-
 #include "absl/log/absl_check.h"
 #include "absl/log/absl_log.h"
-#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "google/protobuf/compiler/cpp/helpers.h"
 #include "google/protobuf/compiler/cpp/names.h"
@@ -195,28 +192,10 @@ void CppMessageExterns(Context& ctx, const Descriptor& msg) {
   ABSL_CHECK(ctx.is_cpp());
   ctx.Emit(
       {{"new_thunk", ThunkName(ctx, msg, "new")},
-       {"default_instance_thunk", ThunkName(ctx, msg, "default_instance")},
-       {"repeated_new_thunk", ThunkName(ctx, msg, "repeated_new")},
-       {"repeated_free_thunk", ThunkName(ctx, msg, "repeated_free")},
-       {"repeated_len_thunk", ThunkName(ctx, msg, "repeated_len")},
-       {"repeated_get_thunk", ThunkName(ctx, msg, "repeated_get")},
-       {"repeated_get_mut_thunk", ThunkName(ctx, msg, "repeated_get_mut")},
-       {"repeated_add_thunk", ThunkName(ctx, msg, "repeated_add")},
-       {"repeated_clear_thunk", ThunkName(ctx, msg, "repeated_clear")},
-       {"repeated_copy_from_thunk", ThunkName(ctx, msg, "repeated_copy_from")},
-       {"repeated_reserve_thunk", ThunkName(ctx, msg, "repeated_reserve")}},
+       {"default_instance_thunk", ThunkName(ctx, msg, "default_instance")}},
       R"rs(
       fn $new_thunk$() -> $pbr$::RawMessage;
       fn $default_instance_thunk$() -> $pbr$::RawMessage;
-      fn $repeated_new_thunk$() -> $pbr$::RawRepeatedField;
-      fn $repeated_free_thunk$(raw: $pbr$::RawRepeatedField);
-      fn $repeated_len_thunk$(raw: $pbr$::RawRepeatedField) -> usize;
-      fn $repeated_add_thunk$(raw: $pbr$::RawRepeatedField) -> $pbr$::RawMessage;
-      fn $repeated_get_thunk$(raw: $pbr$::RawRepeatedField, index: usize) -> $pbr$::RawMessage;
-      fn $repeated_get_mut_thunk$(raw: $pbr$::RawRepeatedField, index: usize) -> $pbr$::RawMessage;
-      fn $repeated_clear_thunk$(raw: $pbr$::RawRepeatedField);
-      fn $repeated_copy_from_thunk$(dst: $pbr$::RawRepeatedField, src: $pbr$::RawRepeatedField);
-      fn $repeated_reserve_thunk$(raw: $pbr$::RawRepeatedField, additional: usize);
     )rs");
 }
 
@@ -365,18 +344,6 @@ void MessageProxiedInRepeated(Context& ctx, const Descriptor& msg) {
       ctx.Emit(
           {
               {"Msg", RsSafeName(msg.name())},
-              {"repeated_len_thunk", ThunkName(ctx, msg, "repeated_len")},
-              {"repeated_get_thunk", ThunkName(ctx, msg, "repeated_get")},
-              {"repeated_get_mut_thunk",
-               ThunkName(ctx, msg, "repeated_get_mut")},
-              {"repeated_add_thunk", ThunkName(ctx, msg, "repeated_add")},
-              {"repeated_new_thunk", ThunkName(ctx, msg, "repeated_new")},
-              {"repeated_free_thunk", ThunkName(ctx, msg, "repeated_free")},
-              {"repeated_clear_thunk", ThunkName(ctx, msg, "repeated_clear")},
-              {"repeated_copy_from_thunk",
-               ThunkName(ctx, msg, "repeated_copy_from")},
-              {"repeated_reserve_thunk",
-               ThunkName(ctx, msg, "repeated_reserve")},
           },
           R"rs(
         unsafe impl $pb$::ProxiedInRepeated for $Msg$ {
@@ -385,8 +352,7 @@ void MessageProxiedInRepeated(Context& ctx, const Descriptor& msg) {
             // - The thunk returns an unaliased and valid `RepeatedPtrField*`
             unsafe {
               $pb$::Repeated::from_inner($pbi$::Private,
-                $pbr$::InnerRepeated::from_raw($repeated_new_thunk$()
-                )
+                $pbr$::InnerRepeated::from_raw($pbr$::proto2_rust_RepeatedField_Message_new())
               )
             }
           }
@@ -394,12 +360,12 @@ void MessageProxiedInRepeated(Context& ctx, const Descriptor& msg) {
           unsafe fn repeated_free(_private: $pbi$::Private, f: &mut $pb$::Repeated<Self>) {
             // SAFETY
             // - `f.raw()` is a valid `RepeatedPtrField*`.
-            unsafe { $repeated_free_thunk$(f.as_view().as_raw($pbi$::Private)) }
+            unsafe { $pbr$::proto2_rust_RepeatedField_Message_free(f.as_view().as_raw($pbi$::Private)) }
           }
 
           fn repeated_len(f: $pb$::View<$pb$::Repeated<Self>>) -> usize {
             // SAFETY: `f.as_raw()` is a valid `RepeatedPtrField*`.
-            unsafe { $repeated_len_thunk$(f.as_raw($pbi$::Private)) }
+            unsafe { $pbr$::proto2_rust_RepeatedField_Message_size(f.as_raw($pbi$::Private)) }
           }
 
           unsafe fn repeated_set_unchecked(
@@ -413,7 +379,7 @@ void MessageProxiedInRepeated(Context& ctx, const Descriptor& msg) {
             // - `v.raw_msg()` is a valid `const Message&`.
             unsafe {
               $pbr$::proto2_rust_Message_copy_from(
-                $repeated_get_mut_thunk$(f.as_raw($pbi$::Private), i),
+                $pbr$::proto2_rust_RepeatedField_Message_get_mut(f.as_raw($pbi$::Private), i),
                 v.into_proxied($pbi$::Private).raw_msg(),
               );
             }
@@ -426,13 +392,13 @@ void MessageProxiedInRepeated(Context& ctx, const Descriptor& msg) {
             // SAFETY:
             // - `f.as_raw()` is a valid `const RepeatedPtrField&`.
             // - `i < len(f)` is promised by caller.
-            let msg = unsafe { $repeated_get_thunk$(f.as_raw($pbi$::Private), i) };
+            let msg = unsafe { $pbr$::proto2_rust_RepeatedField_Message_get(f.as_raw($pbi$::Private), i) };
             $pb$::View::<Self>::new($pbi$::Private, msg)
           }
           fn repeated_clear(mut f: $pb$::Mut<$pb$::Repeated<Self>>) {
             // SAFETY:
             // - `f.as_raw()` is a valid `RepeatedPtrField*`.
-            unsafe { $repeated_clear_thunk$(f.as_raw($pbi$::Private)) };
+            unsafe { $pbr$::proto2_rust_RepeatedField_Message_clear(f.as_raw($pbi$::Private)) };
           }
 
           fn repeated_push(mut f: $pb$::Mut<$pb$::Repeated<Self>>, v: impl $pb$::IntoProxied<Self>) {
@@ -440,7 +406,8 @@ void MessageProxiedInRepeated(Context& ctx, const Descriptor& msg) {
             // - `f.as_raw()` is a valid `RepeatedPtrField*`.
             // - `v.raw_msg()` is a valid `const Message&`.
             unsafe {
-              let new_elem = $repeated_add_thunk$(f.as_raw($pbi$::Private));
+              let prototype = <$Msg$View as $std$::default::Default>::default().raw_msg();
+              let new_elem = $pbr$::proto2_rust_RepeatedField_Message_add(f.as_raw($pbi$::Private), prototype);
               $pbr$::proto2_rust_Message_copy_from(new_elem, v.into_proxied($pbi$::Private).raw_msg());
             }
           }
@@ -453,7 +420,7 @@ void MessageProxiedInRepeated(Context& ctx, const Descriptor& msg) {
             // - `dest.as_raw()` is a valid `RepeatedPtrField*`.
             // - `src.as_raw()` is a valid `const RepeatedPtrField&`.
             unsafe {
-              $repeated_copy_from_thunk$(dest.as_raw($pbi$::Private), src.as_raw($pbi$::Private));
+              $pbr$::proto2_rust_RepeatedField_Message_copy_from(dest.as_raw($pbi$::Private), src.as_raw($pbi$::Private));
             }
           }
 
@@ -463,7 +430,7 @@ void MessageProxiedInRepeated(Context& ctx, const Descriptor& msg) {
           ) {
             // SAFETY:
             // - `f.as_raw()` is a valid `RepeatedPtrField*`.
-            unsafe { $repeated_reserve_thunk$(f.as_raw($pbi$::Private), additional) }
+            unsafe { $pbr$::proto2_rust_RepeatedField_Message_reserve(f.as_raw($pbi$::Private), additional) }
           }
         }
       )rs");
@@ -584,10 +551,7 @@ void TypeConversions(Context& ctx, const Descriptor& msg) {
               }
 
               fn to_map_value(self) -> $pbr$::MapValue {
-                  use $pb$::OwnedMessageInterop;
-                  $pbr$::MapValue::make_message(unsafe {
-                      $NonNull$::new_unchecked(self.__unstable_leak_raw_message() as *mut _)
-                  })
+                  $pbr$::MapValue::make_message(std::mem::ManuallyDrop::new(self).raw_msg())
               }
 
               unsafe fn from_map_value<'b>(value: $pbr$::MapValue) -> $Msg$View<'b> {
@@ -654,119 +618,122 @@ void GenerateRs(Context& ctx, const Descriptor& msg) {
     return;
   }
   ctx.Emit(
-      {{"Msg", RsSafeName(msg.name())},
-       {"Msg::new", [&] { MessageNew(ctx, msg); }},
-       {"Msg::serialize", [&] { MessageSerialize(ctx, msg); }},
-       {"MsgMut::clear", [&] { MessageMutClear(ctx, msg); }},
-       {"Msg::clear_and_parse", [&] { MessageClearAndParse(ctx, msg); }},
-       {"Msg::drop", [&] { MessageDrop(ctx, msg); }},
-       {"Msg::debug", [&] { MessageDebug(ctx, msg); }},
-       {"MsgMut::merge_from", [&] { MessageMutMergeFrom(ctx, msg); }},
-       {"default_instance_impl",
-        [&] { GenerateDefaultInstanceImpl(ctx, msg); }},
-       {"accessor_fns",
-        [&] {
-          for (int i = 0; i < msg.field_count(); ++i) {
-            GenerateAccessorMsgImpl(ctx, *msg.field(i), AccessorCase::OWNED);
-          }
-          for (int i = 0; i < msg.real_oneof_decl_count(); ++i) {
-            GenerateOneofAccessors(ctx, *msg.real_oneof_decl(i),
-                                   AccessorCase::OWNED);
-          }
-        }},
-       {"nested_in_msg",
-        [&] {
-          // If we have no nested types, enums, or oneofs, bail out without
-          // emitting an empty mod some_msg.
-          if (msg.nested_type_count() == 0 && msg.enum_type_count() == 0 &&
-              msg.real_oneof_decl_count() == 0) {
-            return;
-          }
-          ctx.Emit({{"mod_name", RsSafeName(CamelToSnakeCase(msg.name()))},
-                    {"nested_msgs",
-                     [&] {
-                       for (int i = 0; i < msg.nested_type_count(); ++i) {
-                         GenerateRs(ctx, *msg.nested_type(i));
-                       }
-                     }},
-                    {"nested_enums",
-                     [&] {
-                       for (int i = 0; i < msg.enum_type_count(); ++i) {
-                         GenerateEnumDefinition(ctx, *msg.enum_type(i));
-                       }
-                     }},
-                    {"oneofs",
-                     [&] {
-                       for (int i = 0; i < msg.real_oneof_decl_count(); ++i) {
-                         GenerateOneofDefinition(ctx, *msg.real_oneof_decl(i));
-                       }
-                     }}},
-                   R"rs(
-                 pub mod $mod_name$ {
+      {
+          {"Msg", RsSafeName(msg.name())},
+          {"Msg::new", [&] { MessageNew(ctx, msg); }},
+          {"Msg::serialize", [&] { MessageSerialize(ctx, msg); }},
+          {"MsgMut::clear", [&] { MessageMutClear(ctx, msg); }},
+          {"Msg::clear_and_parse", [&] { MessageClearAndParse(ctx, msg); }},
+          {"Msg::drop", [&] { MessageDrop(ctx, msg); }},
+          {"Msg::debug", [&] { MessageDebug(ctx, msg); }},
+          {"MsgMut::merge_from", [&] { MessageMutMergeFrom(ctx, msg); }},
+          {"default_instance_impl",
+           [&] { GenerateDefaultInstanceImpl(ctx, msg); }},
+          {"accessor_fns",
+           [&] {
+             for (int i = 0; i < msg.field_count(); ++i) {
+               GenerateAccessorMsgImpl(ctx, *msg.field(i), AccessorCase::OWNED);
+             }
+             for (int i = 0; i < msg.real_oneof_decl_count(); ++i) {
+               GenerateOneofAccessors(ctx, *msg.real_oneof_decl(i),
+                                      AccessorCase::OWNED);
+             }
+           }},
+          {"nested_in_msg",
+           [&] {
+             // If we have no nested types, enums, or oneofs, bail out without
+             // emitting an empty mod some_msg.
+             if (msg.nested_type_count() == 0 && msg.enum_type_count() == 0 &&
+                 msg.real_oneof_decl_count() == 0) {
+               return;
+             }
+             ctx.PushModule(RsSafeName(CamelToSnakeCase(msg.name())));
+             ctx.Emit(
+                 {{"nested_msgs",
+                   [&] {
+                     for (int i = 0; i < msg.nested_type_count(); ++i) {
+                       GenerateRs(ctx, *msg.nested_type(i));
+                     }
+                   }},
+                  {"nested_enums",
+                   [&] {
+                     for (int i = 0; i < msg.enum_type_count(); ++i) {
+                       GenerateEnumDefinition(ctx, *msg.enum_type(i));
+                     }
+                   }},
+                  {"oneofs",
+                   [&] {
+                     for (int i = 0; i < msg.real_oneof_decl_count(); ++i) {
+                       GenerateOneofDefinition(ctx, *msg.real_oneof_decl(i));
+                     }
+                   }}},
+                 R"rs(
                    $nested_msgs$
                    $nested_enums$
 
                    $oneofs$
-                 }  // mod $mod_name$
                 )rs");
-        }},
-       {"raw_arena_getter_for_message",
-        [&] {
-          if (ctx.is_upb()) {
-            ctx.Emit({}, R"rs(
+             ctx.PopModule();
+           }},
+          {"raw_arena_getter_for_message",
+           [&] {
+             if (ctx.is_upb()) {
+               ctx.Emit({}, R"rs(
                   fn arena(&self) -> &$pbr$::Arena {
                     &self.inner.arena
                   }
                   )rs");
-          }
-        }},
-       {"raw_arena_getter_for_msgmut",
-        [&] {
-          if (ctx.is_upb()) {
-            ctx.Emit({}, R"rs(
+             }
+           }},
+          {"raw_arena_getter_for_msgmut",
+           [&] {
+             if (ctx.is_upb()) {
+               ctx.Emit({}, R"rs(
                   fn arena(&self) -> &$pbr$::Arena {
                     self.inner.arena()
                   }
                   )rs");
-          }
-        }},
-       {"accessor_fns_for_views",
-        [&] {
-          for (int i = 0; i < msg.field_count(); ++i) {
-            GenerateAccessorMsgImpl(ctx, *msg.field(i), AccessorCase::VIEW);
-          }
-          for (int i = 0; i < msg.real_oneof_decl_count(); ++i) {
-            GenerateOneofAccessors(ctx, *msg.real_oneof_decl(i),
-                                   AccessorCase::VIEW);
-          }
-        }},
-       {"accessor_fns_for_muts",
-        [&] {
-          for (int i = 0; i < msg.field_count(); ++i) {
-            GenerateAccessorMsgImpl(ctx, *msg.field(i), AccessorCase::MUT);
-          }
-          for (int i = 0; i < msg.real_oneof_decl_count(); ++i) {
-            GenerateOneofAccessors(ctx, *msg.real_oneof_decl(i),
-                                   AccessorCase::MUT);
-          }
-        }},
-       {"into_proxied_impl", [&] { IntoProxiedForMessage(ctx, msg); }},
-       {"upb_generated_message_trait_impls",
-        [&] { UpbGeneratedMessageTraitImpls(ctx, msg); }},
-       {"repeated_impl", [&] { MessageProxiedInRepeated(ctx, msg); }},
-       {"type_conversions_impl", [&] { TypeConversions(ctx, msg); }},
-       {"unwrap_upb",
-        [&] {
-          if (ctx.is_upb()) {
-            ctx.Emit(".unwrap_or_else(||$pbr$::ScratchSpace::zeroed_block())");
-          }
-        }},
-       {"upb_arena",
-        [&] {
-          if (ctx.is_upb()) {
-            ctx.Emit(", inner.msg_ref().arena().raw()");
-          }
-        }}},
+             }
+           }},
+          {"accessor_fns_for_views",
+           [&] {
+             for (int i = 0; i < msg.field_count(); ++i) {
+               GenerateAccessorMsgImpl(ctx, *msg.field(i), AccessorCase::VIEW);
+             }
+             for (int i = 0; i < msg.real_oneof_decl_count(); ++i) {
+               GenerateOneofAccessors(ctx, *msg.real_oneof_decl(i),
+                                      AccessorCase::VIEW);
+             }
+           }},
+          {"accessor_fns_for_muts",
+           [&] {
+             for (int i = 0; i < msg.field_count(); ++i) {
+               GenerateAccessorMsgImpl(ctx, *msg.field(i), AccessorCase::MUT);
+             }
+             for (int i = 0; i < msg.real_oneof_decl_count(); ++i) {
+               GenerateOneofAccessors(ctx, *msg.real_oneof_decl(i),
+                                      AccessorCase::MUT);
+             }
+           }},
+          {"into_proxied_impl", [&] { IntoProxiedForMessage(ctx, msg); }},
+          {"upb_generated_message_trait_impls",
+           [&] { UpbGeneratedMessageTraitImpls(ctx, msg); }},
+          {"repeated_impl", [&] { MessageProxiedInRepeated(ctx, msg); }},
+          {"type_conversions_impl", [&] { TypeConversions(ctx, msg); }},
+          {"unwrap_upb",
+           [&] {
+             if (ctx.is_upb()) {
+               ctx.Emit(
+                   ".unwrap_or_else(||$pbr$::ScratchSpace::zeroed_block())");
+             }
+           }},
+          {"upb_arena",
+           [&] {
+             if (ctx.is_upb()) {
+               ctx.Emit(", inner.msg_ref().arena().raw()");
+             }
+           }},
+      },
       R"rs(
         #[allow(non_camel_case_types)]
         pub struct $Msg$ {
@@ -808,7 +775,8 @@ void GenerateRs(Context& ctx, const Descriptor& msg) {
 
         impl $pb$::Clear for $Msg$ {
           fn clear(&mut self) {
-            self.as_mut().clear()
+            let mut m = self.as_mut();
+            $pb$::Clear::clear(&mut m)
           }
         }
 
@@ -1289,15 +1257,6 @@ void GenerateThunksCc(Context& ctx, const Descriptor& msg) {
        {"QualifiedMsg", cpp::QualifiedClassName(&msg)},
        {"new_thunk", ThunkName(ctx, msg, "new")},
        {"default_instance_thunk", ThunkName(ctx, msg, "default_instance")},
-       {"repeated_new_thunk", ThunkName(ctx, msg, "repeated_new")},
-       {"repeated_free_thunk", ThunkName(ctx, msg, "repeated_free")},
-       {"repeated_len_thunk", ThunkName(ctx, msg, "repeated_len")},
-       {"repeated_get_thunk", ThunkName(ctx, msg, "repeated_get")},
-       {"repeated_get_mut_thunk", ThunkName(ctx, msg, "repeated_get_mut")},
-       {"repeated_add_thunk", ThunkName(ctx, msg, "repeated_add")},
-       {"repeated_clear_thunk", ThunkName(ctx, msg, "repeated_clear")},
-       {"repeated_copy_from_thunk", ThunkName(ctx, msg, "repeated_copy_from")},
-       {"repeated_reserve_thunk", ThunkName(ctx, msg, "repeated_reserve")},
        {"nested_msg_thunks",
         [&] {
           for (int i = 0; i < msg.nested_type_count(); ++i) {
@@ -1326,44 +1285,6 @@ void GenerateThunksCc(Context& ctx, const Descriptor& msg) {
 
         const google::protobuf::MessageLite* $default_instance_thunk$() {
           return &$QualifiedMsg$::default_instance();
-        }
-
-        void* $repeated_new_thunk$() {
-          return new google::protobuf::RepeatedPtrField<$QualifiedMsg$>();
-        }
-
-        void $repeated_free_thunk$(void* ptr) {
-          delete static_cast<google::protobuf::RepeatedPtrField<$QualifiedMsg$>*>(ptr);
-        }
-
-        size_t $repeated_len_thunk$(google::protobuf::RepeatedPtrField<$QualifiedMsg$>* field) {
-          return field->size();
-        }
-        const $QualifiedMsg$* $repeated_get_thunk$(
-          google::protobuf::RepeatedPtrField<$QualifiedMsg$>* field,
-          size_t index) {
-          return &field->Get(index);
-        }
-        $QualifiedMsg$* $repeated_get_mut_thunk$(
-          google::protobuf::RepeatedPtrField<$QualifiedMsg$>* field,
-          size_t index) {
-          return field->Mutable(index);
-        }
-        $QualifiedMsg$* $repeated_add_thunk$(google::protobuf::RepeatedPtrField<$QualifiedMsg$>* field) {
-          return field->Add();
-        }
-        void $repeated_clear_thunk$(google::protobuf::RepeatedPtrField<$QualifiedMsg$>* field) {
-          field->Clear();
-        }
-        void $repeated_copy_from_thunk$(
-          google::protobuf::RepeatedPtrField<$QualifiedMsg$>& dst,
-          const google::protobuf::RepeatedPtrField<$QualifiedMsg$>& src) {
-          dst = src;
-        }
-        void $repeated_reserve_thunk$(
-          google::protobuf::RepeatedPtrField<$QualifiedMsg$>* field,
-          size_t additional) {
-          field->Reserve(field->size() + additional);
         }
 
         $accessor_thunks$

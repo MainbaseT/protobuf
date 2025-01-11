@@ -589,6 +589,30 @@ macro_rules! impl_repeated_primitives {
 
 impl_repeated_primitives!(i32, u32, i64, u64, f32, f64, bool, ProtoString, ProtoBytes);
 
+extern "C" {
+    pub fn proto2_rust_RepeatedField_Message_new() -> RawRepeatedField;
+    pub fn proto2_rust_RepeatedField_Message_free(field: RawRepeatedField);
+    pub fn proto2_rust_RepeatedField_Message_size(field: RawRepeatedField) -> usize;
+    pub fn proto2_rust_RepeatedField_Message_get(
+        field: RawRepeatedField,
+        index: usize,
+    ) -> RawMessage;
+    pub fn proto2_rust_RepeatedField_Message_get_mut(
+        field: RawRepeatedField,
+        index: usize,
+    ) -> RawMessage;
+    pub fn proto2_rust_RepeatedField_Message_add(
+        field: RawRepeatedField,
+        prototype: RawMessage,
+    ) -> RawMessage;
+    pub fn proto2_rust_RepeatedField_Message_clear(field: RawRepeatedField);
+    pub fn proto2_rust_RepeatedField_Message_copy_from(
+        dst: RawRepeatedField,
+        src: RawRepeatedField,
+    );
+    pub fn proto2_rust_RepeatedField_Message_reserve(field: RawRepeatedField, additional: usize);
+}
+
 /// Cast a `RepeatedView<SomeEnum>` to `RepeatedView<c_int>`.
 pub fn cast_enum_repeated_view<E: Enum + ProxiedInRepeated>(
     repeated: RepeatedView<E>,
@@ -766,23 +790,28 @@ impl UntypedMapIterator {
 #[doc(hidden)]
 #[repr(u8)]
 #[derive(Debug, PartialEq)]
+// Copy of UntypedMapBase::TypeKind
 pub enum MapValueTag {
     Bool,
     U32,
     U64,
+    F32,
+    F64,
     String,
     Message,
+    Unknown,
 }
-
-// For the purposes of FFI, we treat all numeric types of a given size the same
-// way. For example, u32, i32, and f32 values are all represented as a u32.
-// Likewise, u64, i64, and f64 values are all stored in a u64.
+// For the purposes of FFI, we treat all integral types of a given size the same
+// way. For example, u32 and i32 values are all represented as a u32.
+// Likewise, u64 and i64 values are all stored in a u64.
 #[doc(hidden)]
 #[repr(C)]
 pub union MapValueUnion {
     pub b: bool,
     pub u: u32,
     pub uu: u64,
+    pub f: f32,
+    pub ff: f64,
     // Generally speaking, if s is set then it should not be None. However, we
     // do set it to None in the special case where the MapValue is just a
     // "prototype" (see below). In that scenario, we just want to indicate the
@@ -812,6 +841,14 @@ impl MapValue {
 
     fn make_u64(uu: u64) -> Self {
         MapValue { tag: MapValueTag::U64, val: MapValueUnion { uu } }
+    }
+
+    pub fn make_f32(f: f32) -> Self {
+        MapValue { tag: MapValueTag::F32, val: MapValueUnion { f } }
+    }
+
+    fn make_f64(ff: f64) -> Self {
+        MapValue { tag: MapValueTag::F64, val: MapValueUnion { ff } }
     }
 
     fn make_string(s: CppStdString) -> Self {
@@ -897,27 +934,27 @@ impl CppMapTypeConversions for i64 {
 
 impl CppMapTypeConversions for f32 {
     fn get_prototype() -> MapValue {
-        MapValue::make_u32(0)
+        MapValue::make_f32(0f32)
     }
     fn to_map_value(self) -> MapValue {
-        MapValue::make_u32(self.to_bits())
+        MapValue::make_f32(self)
     }
     unsafe fn from_map_value<'a>(value: MapValue) -> View<'a, Self> {
-        debug_assert_eq!(value.tag, MapValueTag::U32);
-        unsafe { Self::from_bits(value.val.u) }
+        debug_assert_eq!(value.tag, MapValueTag::F32);
+        unsafe { value.val.f }
     }
 }
 
 impl CppMapTypeConversions for f64 {
     fn get_prototype() -> MapValue {
-        MapValue::make_u64(0)
+        MapValue::make_f64(0.0)
     }
     fn to_map_value(self) -> MapValue {
-        MapValue::make_u64(self.to_bits())
+        MapValue::make_f64(self)
     }
     unsafe fn from_map_value<'a>(value: MapValue) -> View<'a, Self> {
-        debug_assert_eq!(value.tag, MapValueTag::U64);
-        unsafe { Self::from_bits(value.val.uu) }
+        debug_assert_eq!(value.tag, MapValueTag::F64);
+        unsafe { value.val.ff }
     }
 }
 
@@ -980,27 +1017,13 @@ where
 
     fn to_view<'a>(key: Self::FfiKey) -> View<'a, Self>;
 
-    unsafe fn free(m: RawMap, prototype: MapValue);
-
-    unsafe fn clear(m: RawMap, prototype: MapValue);
-
     unsafe fn insert(m: RawMap, key: View<'_, Self>, value: MapValue) -> bool;
 
-    unsafe fn get(
-        m: RawMap,
-        prototype: MapValue,
-        key: View<'_, Self>,
-        value: *mut MapValue,
-    ) -> bool;
+    unsafe fn get(m: RawMap, key: View<'_, Self>, value: *mut MapValue) -> bool;
 
-    unsafe fn iter_get(
-        iter: &mut UntypedMapIterator,
-        prototype: MapValue,
-        key: *mut Self::FfiKey,
-        value: *mut MapValue,
-    );
+    unsafe fn iter_get(iter: &mut UntypedMapIterator, key: *mut Self::FfiKey, value: *mut MapValue);
 
-    unsafe fn remove(m: RawMap, prototype: MapValue, key: View<'_, Self>) -> bool;
+    unsafe fn remove(m: RawMap, key: View<'_, Self>) -> bool;
 }
 
 macro_rules! generate_map_key_impl {
@@ -1016,16 +1039,6 @@ macro_rules! generate_map_key_impl {
             }
 
             #[inline]
-            unsafe fn free(m: RawMap, prototype: MapValue) {
-                unsafe { [< proto2_rust_map_free_ $key >](m, prototype) }
-            }
-
-            #[inline]
-            unsafe fn clear(m: RawMap, prototype: MapValue) {
-                unsafe { [< proto2_rust_map_clear_ $key >](m, prototype) }
-            }
-
-            #[inline]
             unsafe fn insert(
                 m: RawMap,
                 key: View<'_, Self>,
@@ -1037,26 +1050,24 @@ macro_rules! generate_map_key_impl {
             #[inline]
             unsafe fn get(
                 m: RawMap,
-                prototype: MapValue,
                 key: View<'_, Self>,
                 value: *mut MapValue,
             ) -> bool {
-                unsafe { [< proto2_rust_map_get_ $key >](m, prototype, $to_ffi(key), value) }
+                unsafe { [< proto2_rust_map_get_ $key >](m, $to_ffi(key), value) }
             }
 
             #[inline]
             unsafe fn iter_get(
                 iter: &mut UntypedMapIterator,
-                prototype: MapValue,
                 key: *mut Self::FfiKey,
                 value: *mut MapValue,
             ) {
-                unsafe { [< proto2_rust_map_iter_get_ $key >](iter, prototype, key, value) }
+                unsafe { [< proto2_rust_map_iter_get_ $key >](iter, key, value) }
             }
 
             #[inline]
-            unsafe fn remove(m: RawMap, prototype: MapValue, key: View<'_, Self>) -> bool {
-                unsafe { [< proto2_rust_map_remove_ $key >](m, prototype, $to_ffi(key)) }
+            unsafe fn remove(m: RawMap, key: View<'_, Self>) -> bool {
+                unsafe { [< proto2_rust_map_remove_ $key >](m, $to_ffi(key)) }
             }
         }
         )*
@@ -1075,22 +1086,27 @@ generate_map_key_impl!(
 
 impl<Key, Value> ProxiedInMapValue<Key> for Value
 where
-    Key: Proxied + MapKey,
+    Key: Proxied + MapKey + CppMapTypeConversions,
     Value: Proxied + CppMapTypeConversions,
 {
     fn map_new(_private: Private) -> Map<Key, Self> {
-        unsafe { Map::from_inner(Private, InnerMap::new(proto2_rust_map_new())) }
+        unsafe {
+            Map::from_inner(
+                Private,
+                InnerMap::new(proto2_rust_map_new(Key::get_prototype(), Value::get_prototype())),
+            )
+        }
     }
 
     unsafe fn map_free(_private: Private, map: &mut Map<Key, Self>) {
         unsafe {
-            Key::free(map.as_raw(Private), Self::get_prototype());
+            proto2_rust_map_free(map.as_raw(Private));
         }
     }
 
     fn map_clear(mut map: MapMut<Key, Self>) {
         unsafe {
-            Key::clear(map.as_raw(Private), Self::get_prototype());
+            proto2_rust_map_clear(map.as_raw(Private));
         }
     }
 
@@ -1108,9 +1124,7 @@ where
 
     fn map_get<'a>(map: MapView<'a, Key, Self>, key: View<'_, Key>) -> Option<View<'a, Self>> {
         let mut value = std::mem::MaybeUninit::uninit();
-        let found = unsafe {
-            Key::get(map.as_raw(Private), Self::get_prototype(), key, value.as_mut_ptr())
-        };
+        let found = unsafe { Key::get(map.as_raw(Private), key, value.as_mut_ptr()) };
         if !found {
             return None;
         }
@@ -1118,7 +1132,7 @@ where
     }
 
     fn map_remove(mut map: MapMut<Key, Self>, key: View<'_, Key>) -> bool {
-        unsafe { Key::remove(map.as_raw(Private), Self::get_prototype(), key) }
+        unsafe { Key::remove(map.as_raw(Private), key) }
     }
 
     fn map_iter(map: MapView<Key, Self>) -> MapIter<Key, Self> {
@@ -1141,7 +1155,7 @@ where
         // - The thunk does not increment the iterator.
         unsafe {
             iter.as_raw_mut(Private).next_unchecked::<Key, Self, _, _>(
-                |iter, key, value| Key::iter_get(iter, Self::get_prototype(), key, value),
+                |iter, key, value| Key::iter_get(iter, key, value),
                 |ffi_key| Key::to_view(ffi_key),
                 |value| Self::from_map_value(value),
             )
@@ -1151,8 +1165,6 @@ where
 
 macro_rules! impl_map_primitives {
     (@impl $(($rust_type:ty, $cpp_type:ty) => [
-        $free_thunk:ident,
-        $clear_thunk:ident,
         $insert_thunk:ident,
         $get_thunk:ident,
         $iter_get_thunk:ident,
@@ -1160,14 +1172,6 @@ macro_rules! impl_map_primitives {
     ]),* $(,)?) => {
         $(
             extern "C" {
-                pub fn $free_thunk(
-                    m: RawMap,
-                    prototype: MapValue,
-                );
-                pub fn $clear_thunk(
-                    m: RawMap,
-                    prototype: MapValue,
-                );
                 pub fn $insert_thunk(
                     m: RawMap,
                     key: $cpp_type,
@@ -1175,17 +1179,15 @@ macro_rules! impl_map_primitives {
                 ) -> bool;
                 pub fn $get_thunk(
                     m: RawMap,
-                    prototype: MapValue,
                     key: $cpp_type,
                     value: *mut MapValue,
                 ) -> bool;
                 pub fn $iter_get_thunk(
                     iter: &mut UntypedMapIterator,
-                    prototype: MapValue,
                     key: *mut $cpp_type,
                     value: *mut MapValue,
                 );
-                pub fn $remove_thunk(m: RawMap, prototype: MapValue, key: $cpp_type) -> bool;
+                pub fn $remove_thunk(m: RawMap, key: $cpp_type) -> bool;
             }
         )*
     };
@@ -1193,8 +1195,6 @@ macro_rules! impl_map_primitives {
         paste!{
             impl_map_primitives!(@impl $(
                     ($rust_type, $cpp_type) => [
-                    [< proto2_rust_map_free_ $rust_type >],
-                    [< proto2_rust_map_clear_ $rust_type >],
                     [< proto2_rust_map_insert_ $rust_type >],
                     [< proto2_rust_map_get_ $rust_type >],
                     [< proto2_rust_map_iter_get_ $rust_type >],
@@ -1217,7 +1217,9 @@ impl_map_primitives!(
 extern "C" {
     fn proto2_rust_thunk_UntypedMapIterator_increment(iter: &mut UntypedMapIterator);
 
-    pub fn proto2_rust_map_new() -> RawMap;
+    pub fn proto2_rust_map_new(key_prototype: MapValue, value_prototype: MapValue) -> RawMap;
+    pub fn proto2_rust_map_free(m: RawMap);
+    pub fn proto2_rust_map_clear(m: RawMap);
     pub fn proto2_rust_map_size(m: RawMap) -> usize;
     pub fn proto2_rust_map_iter(m: RawMap) -> UntypedMapIterator;
 }

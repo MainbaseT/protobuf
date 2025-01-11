@@ -84,7 +84,7 @@ using google::protobuf::io::win32::write;
 
 // Disable the whole test when we use tcmalloc for "draconian" heap checks, in
 // which case tcmalloc will print warnings that fail the plugin tests.
-#if !GOOGLE_PROTOBUF_HEAP_CHECK_DRACONIAN
+#if !defined(GOOGLE_PROTOBUF_HEAP_CHECK_DRACONIAN)
 
 
 namespace {
@@ -1633,7 +1633,7 @@ TEST_F(CommandLineInterfaceTest, Plugin_VersionSkewFuture) {
 
   ExpectErrorSubstring(
       "foo.proto:2:5: Edition 99997_TEST_ONLY is later than the maximum "
-      "supported edition 2023");
+      "supported edition 2024");
 }
 
 TEST_F(CommandLineInterfaceTest, Plugin_VersionSkewPast) {
@@ -1925,6 +1925,70 @@ TEST_F(CommandLineInterfaceTest, PluginErrorAndNoEditionsSupport) {
       "code generator prefix-gen-plug hasn't been updated to support editions");
   ExpectErrorSubstring(
       "--plug_out: foo.proto: Saw message type MockCodeGenerator_Error.");
+}
+
+TEST_F(CommandLineInterfaceTest, AfterProtocMaximumEditionError) {
+  CreateTempFile("foo.proto",
+                 R"schema(
+    edition = "2024";
+    package foo;
+    message Foo {
+    }
+  )schema");
+
+  Run("protocol_compiler --proto_path=$tmpdir --test_out=$tmpdir foo.proto");
+  ExpectErrorSubstring(
+      "foo.proto: is a file using edition 2024, which is later than the protoc "
+      "maximum supported edition 2023.");
+}
+
+TEST_F(CommandLineInterfaceTest, AfterProtocMaximumEditionAllowlisted) {
+  constexpr absl::string_view path = "google/protobuf";
+  CreateTempFile(absl::StrCat(path, "/foo.proto"),
+                 R"schema(
+    edition = "2024";
+    package foo;
+    message Foo {
+    }
+  )schema");
+
+  Run(
+      absl::Substitute("protocol_compiler --proto_path=$$tmpdir "
+                       "--test_out=$$tmpdir $0/foo.proto",
+                       path));
+  ExpectNoErrors();
+}
+
+TEST_F(CommandLineInterfaceTest,
+       AfterProtocMaximumEditionExperimentalEditions) {
+  CreateTempFile("foo.proto",
+                 R"schema(
+    edition = "2024";
+    package foo;
+    message Foo {
+    }
+  )schema");
+
+  Run("protocol_compiler --experimental_editions --proto_path=$tmpdir "
+      "--test_out=$tmpdir foo.proto");
+  ExpectNoErrors();
+}
+
+TEST_F(CommandLineInterfaceTest,
+       AfterMaximumKnownEditionErrorExperimentalEditions) {
+  CreateTempFile("foo.proto",
+                 R"schema(
+    edition = "99997_TEST_ONLY";
+    package foo;
+    message Foo {
+    }
+  )schema");
+
+  Run("protocol_compiler --experimental_editions --proto_path=$tmpdir "
+      "--test_out=$tmpdir foo.proto");
+  ExpectErrorSubstring(
+      "foo.proto:2:5: Edition 99997_TEST_ONLY is later than the maximum "
+      "supported edition 2024\n");
 }
 
 TEST_F(CommandLineInterfaceTest, EditionDefaults) {
