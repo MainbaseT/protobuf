@@ -16,6 +16,8 @@
 #include <vector>
 
 #include "absl/base/attributes.h"
+#include "absl/base/dynamic_annotations.h"
+#include "absl/base/optimization.h"
 #include "absl/base/prefetch.h"
 #include "absl/container/internal/layout.h"
 #include "absl/log/absl_check.h"
@@ -336,7 +338,7 @@ void SerialArena::AllocateNewBlock(size_t n) {
   // Previous writes must take effect before writing new head.
   head_.store(new_head, std::memory_order_release);
 
-  PROTOBUF_POISON_MEMORY_REGION(ptr(), limit_ - ptr());
+  internal::PoisonMemoryRegion(ptr(), limit_ - ptr());
 }
 
 uint64_t SerialArena::SpaceUsed() const {
@@ -584,6 +586,16 @@ ArenaBlock* ThreadSafeArena::FirstBlock(void* buf, size_t size) {
     return SentryArenaBlock();
   }
   // Record user-owned block.
+
+  if constexpr (internal::PerformDebugChecks()) {
+    // Touch block to verify it is addressable.
+    if (size > 0) {
+      static_cast<char*>(buf)[0] = 0;
+      static_cast<char*>(buf)[size - 1] = 0;
+    }
+  }
+
+  ABSL_ANNOTATE_MEMORY_IS_UNINITIALIZED(buf, size);
   alloc_policy_.set_is_user_owned_initial_block(true);
   return new (buf) ArenaBlock{nullptr, size};
 }
@@ -600,6 +612,14 @@ ArenaBlock* ThreadSafeArena::FirstBlock(void* buf, size_t size,
   } else {
     mem = {buf, size};
     // Record user-owned block.
+    if constexpr (internal::PerformDebugChecks()) {
+      // Touch block to verify it is addressable.
+      if (size > 0) {
+        static_cast<char*>(buf)[0] = 0;
+        static_cast<char*>(buf)[size - 1] = 0;
+      }
+    }
+    ABSL_ANNOTATE_MEMORY_IS_UNINITIALIZED(buf, size);
     alloc_policy_.set_is_user_owned_initial_block(true);
   }
 
@@ -640,7 +660,7 @@ uint64_t ThreadSafeArena::GetNextLifeCycleId() {
   ThreadCache& tc = thread_cache();
   uint64_t id = tc.next_lifecycle_id;
   constexpr uint64_t kInc = ThreadCache::kPerThreadIds;
-  if (PROTOBUF_PREDICT_FALSE((id & (kInc - 1)) == 0)) {
+  if (ABSL_PREDICT_FALSE((id & (kInc - 1)) == 0)) {
     // On platforms that don't support uint64_t atomics we can certainly not
     // afford to increment by large intervals and expect uniqueness due to
     // wrapping, hence we only add by 1.
@@ -712,7 +732,7 @@ void ThreadSafeArena::UnpoisonAllArenaBlocks() const {
   VisitSerialArena([](const SerialArena* serial) {
     for (const auto* b = serial->head(); b != nullptr && !b->IsSentry();
          b = b->next) {
-      PROTOBUF_UNPOISON_MEMORY_REGION(b, b->size);
+      internal::UnpoisonMemoryRegion(b, b->size);
     }
   });
 }
@@ -742,7 +762,7 @@ ThreadSafeArena::~ThreadSafeArena() {
   auto mem = Free();
   if (alloc_policy_.is_user_owned_initial_block()) {
     // Unpoison the initial block, now that it's going back to the user.
-    PROTOBUF_UNPOISON_MEMORY_REGION(mem.p, mem.n);
+    internal::UnpoisonMemoryRegion(mem.p, mem.n);
   } else if (mem.n > 0) {
     GetDeallocator(alloc_policy_.get())(mem);
   }
@@ -795,6 +815,8 @@ uint64_t ThreadSafeArena::Reset() {
     size_t offset = alloc_policy_.get() == nullptr
                         ? kBlockHeaderSize
                         : kBlockHeaderSize + kAllocPolicySize;
+    ABSL_ANNOTATE_MEMORY_IS_UNINITIALIZED(static_cast<char*>(mem.p) + offset,
+                                          mem.n - offset);
     first_arena_.Init(new (mem.p) ArenaBlock{nullptr, mem.n}, offset);
   } else {
     first_arena_.Init(SentryArenaBlock(), 0);
@@ -810,7 +832,7 @@ uint64_t ThreadSafeArena::Reset() {
 void* ThreadSafeArena::AllocateAlignedWithCleanup(size_t n, size_t align,
                                                   void (*destructor)(void*)) {
   SerialArena* arena;
-  if (PROTOBUF_PREDICT_TRUE(GetSerialArenaFast(&arena))) {
+  if (ABSL_PREDICT_TRUE(GetSerialArenaFast(&arena))) {
     return arena->AllocateAlignedWithCleanup(n, align, destructor);
   } else {
     return AllocateAlignedWithCleanupFallback(n, align, destructor);
@@ -823,7 +845,7 @@ void ThreadSafeArena::AddCleanup(void* elem, void (*cleanup)(void*)) {
 
 SerialArena* ThreadSafeArena::GetSerialArena() {
   SerialArena* arena;
-  if (PROTOBUF_PREDICT_FALSE(!GetSerialArenaFast(&arena))) {
+  if (ABSL_PREDICT_FALSE(!GetSerialArenaFast(&arena))) {
     arena = GetSerialArenaFallback(kMaxCleanupNodeSize);
   }
   return arena;
@@ -916,9 +938,9 @@ template void*
     ThreadSafeArena::AllocateAlignedFallback<AllocationClient::kArray>(size_t);
 
 void ThreadSafeArena::CleanupList() {
-#ifdef PROTOBUF_ASAN
-  UnpoisonAllArenaBlocks();
-#endif
+  if constexpr (HasMemoryPoisoning()) {
+    UnpoisonAllArenaBlocks();
+  }
 
   WalkSerialArenaChunk([](SerialArenaChunk* chunk) {
     absl::Span<std::atomic<SerialArena*>> span = chunk->arenas();

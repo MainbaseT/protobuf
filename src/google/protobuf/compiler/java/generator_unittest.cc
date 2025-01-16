@@ -8,6 +8,7 @@
 #include "google/protobuf/compiler/java/generator.h"
 
 #include <memory>
+#include <string>
 
 #include "google/protobuf/descriptor.pb.h"
 #include <gtest/gtest.h>
@@ -62,6 +63,28 @@ TEST_F(JavaGeneratorTest, BasicError) {
 
   ExpectErrorSubstring(
       "foo.proto:4:7: Expected \"required\", \"optional\", or \"repeated\"");
+}
+
+TEST_F(JavaGeneratorTest, ImplicitPresenceLegacyClosedEnumDisallowed) {
+  CreateTempFile("foo.proto",
+                 R"schema(
+    edition = "2023";
+    import "third_party/java/protobuf/java_features.proto";
+    option features.field_presence = IMPLICIT;
+    enum Bar {
+      AAA = 0;
+    }
+    message Foo {
+      Bar bar = 1 [features.(pb.java).legacy_closed_enum = true];
+    }
+  )schema");
+
+  RunProtoc(
+      "protocol_compiler --proto_path=$tmpdir --java_out=$tmpdir foo.proto");
+
+  ExpectErrorSubstring(
+      "foo.proto: Field Foo.bar has a closed enum type with implicit "
+      "presence.");
 }
 
 
